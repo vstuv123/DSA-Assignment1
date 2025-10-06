@@ -1,241 +1,142 @@
 // header files
 #include "Polynomial.h"
+#include <map>
 #include <sstream>
 #include <cmath>
-#include <map>
 
 using namespace std;
 
-// internal structure for polynomial term
-struct Node
+// Internal structure to store polynomial terms
+class PolynomialImpl
 {
-    int coeff;  // coefficient of term
-    int exp;    // exponent of term
-    Node *next; // pointer to next node
-
-    // constructor to initialize node
-    Node(int c, int e) : coeff(c), exp(e), next(nullptr) {}
+public:
+    map<int, int> terms;
 };
 
-// global data for storing polynomial linked lists
-static int nextID = 0;
-static map<const Polynomial *, Node *> registry;
-
-// helper function to get head node for a polynomial
-static Node *&getHead(const Polynomial *p)
+// Helper function that returns internal data structure of a given Polynomial object
+static PolynomialImpl &getImpl(Polynomial *p)
 {
-    // if polynomial not found in map, initialize it with nullptr
-    if (!registry.count(p))
-        registry[p] = nullptr;
-    return registry[p];
+
+    static map<Polynomial *, PolynomialImpl> storage;
+    return storage[p];
 }
 
-// helper function to copy a linked list
-static Node *copyList(Node *src)
-{
-    if (!src)
-        return nullptr;
-
-    Node *head = new Node(src->coeff, src->exp);
-    Node *tail = head;
-
-    for (Node *cur = src->next; cur; cur = cur->next)
-    {
-        tail->next = new Node(cur->coeff, cur->exp);
-        tail = tail->next;
-    }
-
-    return head;
-}
-
-// helper function to clear (delete) all nodes in a linked list
-static void clearList(Node *head)
-{
-    while (head)
-    {
-        Node *temp = head;
-        head = head->next;
-        delete temp;
-    }
-}
-
-// insert a term into the polynomial in correct descending order
+// Insert a term into the polynomial
 void Polynomial::insertTerm(int coefficient, int exponent)
 {
-    // ignore if coefficient is zero or exponent is invalid
-    if (coefficient == 0 || exponent < 0)
-        return;
+    PolynomialImpl &impl = getImpl(this);
+    if (coefficient == 0)
+        return; // skip adding zero terms
 
-    Node *&head = getHead(this);
-    Node *newNode = new Node(coefficient, exponent);
+    // Add coefficient if term already exists, otherwise create new one
+    impl.terms[exponent] += coefficient;
 
-    // if list is empty or new exponent is largest, insert at front
-    if (!head || exponent > head->exp)
-    {
-        newNode->next = head;
-        head = newNode;
-        return;
-    }
-
-    Node *cur = head;
-    Node *prev = nullptr;
-
-    // move until correct position is found (descending order)
-    while (cur && cur->exp > exponent)
-    {
-        prev = cur;
-        cur = cur->next;
-    }
-
-    // if exponent already exists, just add coefficients
-    if (cur && cur->exp == exponent)
-    {
-        cur->coeff += coefficient;
-
-        // if coefficient becomes zero, remove the term
-        if (cur->coeff == 0)
-        {
-            if (prev)
-                prev->next = cur->next;
-            else
-                head = cur->next;
-            delete cur;
-        }
-
-        delete newNode; // newNode not needed
-    }
-    else
-    {
-        // insert new node at correct position
-        newNode->next = cur;
-        if (prev)
-            prev->next = newNode;
-        else
-            head = newNode;
-    }
+    // If the coefficient becomes zero after addition, remove that term
+    if (impl.terms[exponent] == 0)
+        impl.terms.erase(exponent);
 }
 
-// convert polynomial to string form like "3x^2 + 2x + 1"
+// Convert polynomial to readable string form
 string Polynomial::toString() const
 {
-    Node *head = getHead(this);
+    const PolynomialImpl &impl = getImpl(const_cast<Polynomial *>(this));
+    if (impl.terms.empty())
+        return "0"; // return 0 for empty polynomial
 
-    // if no terms, return 0
-    if (!head)
-        return "0";
-
-    ostringstream out;
+    ostringstream oss;
     bool first = true;
-    Node *cur = head;
 
-    // go through each node and build the string
-    while (cur)
+    // Iterate from highest to lowest exponent
+    for (auto it = impl.terms.rbegin(); it != impl.terms.rend(); ++it)
     {
-        int c = cur->coeff;
-        int e = cur->exp;
+        int exp = it->first;
+        int coeff = it->second;
 
-        // skip zero coefficients
-        if (c == 0)
-        {
-            cur = cur->next;
-            continue;
-        }
-
-        // handle sign (+ or -)
+        // Handle sign display
         if (!first)
-            out << (c > 0 ? " + " : " - ");
-        else if (c < 0)
-            out << "-";
-
+            oss << (coeff > 0 ? " + " : " - ");
+        else if (coeff < 0)
+            oss << "-";
         first = false;
 
-        int absC = abs(c);
-
-        // print coefficient only if not 1 or -1 (unless exponent = 0)
-        if (!(absC == 1 && e != 0))
-            out << absC;
-
-        // print variable part
-        if (e > 0)
+        // Display term with correct format
+        int absCoeff = abs(coeff);
+        if (exp == 0)
+            oss << absCoeff; // constant term
+        else if (exp == 1)
         {
-            out << "x";
-            if (e > 1)
-                out << "^" << e;
+            if (absCoeff != 1)
+                oss << absCoeff;
+            oss << "x";
         }
-
-        cur = cur->next;
+        else
+        {
+            if (absCoeff != 1)
+                oss << absCoeff;
+            oss << "x^" << exp;
+        }
     }
-
-    return out.str();
+    return oss.str();
 }
 
-// add two polynomials and return a new result polynomial
+// Add two polynomials
 Polynomial Polynomial::add(const Polynomial &other) const
 {
     Polynomial result;
-    Node *head1 = getHead(this);
-    Node *head2 = getHead(&other);
-    Node *&headR = getHead(&result);
+    PolynomialImpl &r = getImpl(&result);
 
-    Node *p1 = head1;
-    Node *p2 = head2;
-    Node **tail = &headR;
+    const PolynomialImpl &a = getImpl(const_cast<Polynomial *>(this));
+    const PolynomialImpl &b = getImpl(const_cast<Polynomial *>(&other));
 
-    // merge both polynomials in sorted order
-    while (p1 || p2)
+    // Copy all terms from first polynomial
+    r.terms = a.terms;
+
+    // Add matching terms from the second polynomial
+    for (auto &kv : b.terms)
     {
-        if (p2 == nullptr || (p1 && p1->exp > p2->exp))
-        {
-            *tail = new Node(p1->coeff, p1->exp);
-            p1 = p1->next;
-        }
-        else if (p1 == nullptr || p2->exp > p1->exp)
-        {
-            *tail = new Node(p2->coeff, p2->exp);
-            p2 = p2->next;
-        }
-        else
-        {
-            int sum = p1->coeff + p2->coeff;
-            if (sum != 0)
-                *tail = new Node(sum, p1->exp);
-            p1 = p1->next;
-            p2 = p2->next;
-        }
-
-        // move tail pointer forward if node was added
-        if (*tail)
-            tail = &((*tail)->next);
+        r.terms[kv.first] += kv.second;
+        if (r.terms[kv.first] == 0)
+            r.terms.erase(kv.first);
     }
-
     return result;
 }
 
-// multiply two polynomials using distributive property
+// Multiply two polynomials
 Polynomial Polynomial::multiply(const Polynomial &other) const
 {
     Polynomial result;
-    Node *head1 = getHead(this);
-    Node *head2 = getHead(&other);
+    PolynomialImpl &r = getImpl(&result);
 
-    // multiply every term of one polynomial with every term of the other
-    for (Node *a = head1; a; a = a->next)
-        for (Node *b = head2; b; b = b->next)
-            result.insertTerm(a->coeff * b->coeff, a->exp + b->exp);
+    const PolynomialImpl &a = getImpl(const_cast<Polynomial *>(this));
+    const PolynomialImpl &b = getImpl(const_cast<Polynomial *>(&other));
 
+    // Multiply each term of 'a' with each term of 'b'
+    for (auto &kv1 : a.terms)
+    {
+        for (auto &kv2 : b.terms)
+        {
+            int exp = kv1.first + kv2.first;     // add exponents
+            int coeff = kv1.second * kv2.second; // multiply coefficients
+            r.terms[exp] += coeff;
+            if (r.terms[exp] == 0)
+                r.terms.erase(exp);
+        }
+    }
     return result;
 }
 
-// find derivative of polynomial (apply power rule)
+// Compute derivative of the polynomial
 Polynomial Polynomial::derivative() const
 {
     Polynomial result;
-    Node *head1 = getHead(this);
+    PolynomialImpl &r = getImpl(&result);
+    const PolynomialImpl &a = getImpl(const_cast<Polynomial *>(this));
 
-    // for each term: d/dx (a*x^n) = (a*n)*x^(n-1)
-    for (Node *cur = head1; cur; cur = cur->next)
-        if (cur->exp > 0)
-            result.insertTerm(cur->coeff * cur->exp, cur->exp - 1);
-
+    // Apply power rule: d/dx [c*x^n] = n*c*x^(n-1)
+    for (auto &kv : a.terms)
+    {
+        if (kv.first > 0)
+            r.terms[kv.first - 1] = kv.second * kv.first;
+    }
     return result;
 }
